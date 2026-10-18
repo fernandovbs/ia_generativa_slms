@@ -1,0 +1,11 @@
+FROM ./qwen2.5-0.5b-instruct.gguf
+
+# Tamanho da janela de contexto (16384 tokens para comportar qualquer histórico/ferramentas do Open WebUI)
+PARAMETER num_ctx 16384
+# Limite máximo de tokens gerados por resposta
+PARAMETER num_predict 2048
+PARAMETER temperature 0.3
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|im_end|>"
+
+SYSTEM """Você é um assistente especialista em Inteligência Artificial Generativa e Small Language Models (SLMs). Responda sempre em português de forma clara, completa e didática."""

@@ -1,0 +1,37 @@
+services:
+  # Servidor Ollama isolado em Container (100% portátil para qualquer notebook sem precisar instalar o Ollama no Windows)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: slm-ollama
+    ports:
+      # Mapeia na porta 11435 do host para não conflitar caso a máquina já tenha um Ollama local na 11434
+      - "11435:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      # Monta a pasta com o arquivo .gguf e o Modelfile dentro do container em /models
+      - ../models/qwen2.5-0.5b-gguf:/models
+    restart: unless-stopped
+
+  # Interface de Chat Oficial (Open WebUI - visual estilo ChatGPT)
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: slm-open-webui
+    depends_on:
+      - ollama
+    ports:
+      - "3000:8080"
+    environment:
+      # Conecta diretamente no container 'ollama' pela rede interna do Docker
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # Garante que o Open WebUI sempre use o OLLAMA_BASE_URL do docker-compose sem sobrescrever pelo banco SQLite
+      - ENABLE_PERSISTENT_CONFIG=false
+      # Desativa tela de login para abrir direto no Chat durante a apresentação
+      - WEBUI_AUTH=false
+      - ENABLE_OPENAI_API=false
+    volumes:
+      - open_webui_data:/app/backend/data
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  open_webui_data:

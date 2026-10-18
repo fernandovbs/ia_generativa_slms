@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 400" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; rx: 16px; }
+      .title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 19px; font-weight: 700; fill: #c084fc; }
+      .subtitle { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; fill: #94a3b8; }
+      .box-title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; font-weight: 700; fill: #f8fafc; }
+      .box-text { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11.5px; fill: #cbd5e1; }
+      .code { font-family: 'Consolas', monospace; font-size: 11px; fill: #d8b4fe; }
+      .arrow { stroke: #c084fc; stroke-width: 2.2; fill: none; }
+    </style>
+    <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#c084fc" />
+    </marker>
+  </defs>
+
+  <rect width="1120" height="400" class="bg" />
+  <text x="560" y="36" text-anchor="middle" class="title">Demo 3 — Compilação Mobile (MLC LLM / Apache TVM), Build APK e Execução 100% Offline</text>
+  <text x="560" y="58" text-anchor="middle" class="subtitle">Da Quantização de 4 bits (q4f16_1) e Kernels OpenCL até o Aplicativo Nativo Android Rodando em Modo Avião</text>
+
+  <!-- Step 1: MLC Config & Quantization -->
+  <rect x="20" y="90" width="245" height="275" rx="10" fill="#1e293b" stroke="#64748b" stroke-width="2" />
+  <text x="142" y="116" text-anchor="middle" class="box-title">1. Quantização 4-bit (q4f16_1)</text>
+  <text x="142" y="136" text-anchor="middle" class="code">mlc_llm gen_config</text>
+  <text x="34" y="164" class="box-text">• Agrupa 32 pesos int4 em</text>
+  <text x="34" y="180" class="box-text">  registradores uint32 + escala fp16</text>
+  <text x="34" y="204" class="box-text">• Reduz modelo para ~265 MB!</text>
+  <text x="34" y="228" class="box-text">• Limites Mobile configurados:</text>
+  <text x="40" y="248" class="code">context_window_size = 4096</text>
+  <text x="40" y="266" class="code">prefill_chunk_size  = 512</text>
+  <rect x="34" y="286" width="217" height="60" rx="6" fill="#0f172a" />
+  <text x="142" y="308" text-anchor="middle" class="box-text" fill="#4ade80">Economia de RAM no Android:</text>
+  <text x="142" y="328" text-anchor="middle" class="code">5365 MB → 628.8 MB (-88%)</text>
+
+  <path d="M 265 227 L 297 227" class="arrow" marker-end="url(#arrow3)" />
+
+  <!-- Step 2: TVM Compiler -->
+  <rect x="302" y="90" width="250" height="275" rx="10" fill="#1e293b" stroke="#c084fc" stroke-width="2" />
+  <text x="427" y="116" text-anchor="middle" class="box-title">2. Compilação TVM Relax</text>
+  <text x="427" y="136" text-anchor="middle" class="code">mlc_llm compile --device android</text>
+  <text x="316" y="164" class="box-text">• Container slm-mlc-compiler</text>
+  <text x="316" y="184" class="box-text">• Fusão de Operadores TIR/Dlight:</text>
+  <text x="321" y="204" class="code">fused_dequantize_NT_matmul</text>
+  <text x="316" y="228" class="box-text">• Target Híbrido Mobile:</text>
+  <text x="321" y="246" class="code">CPU: aarch64-linux-android</text>
+  <text x="321" y="264" class="code">GPU: OpenCL (Adreno / Mali)</text>
+  <rect x="316" y="286" width="222" height="60" rx="6" fill="#0f172a" />
+  <text x="427" y="308" text-anchor="middle" class="box-text">Artefatos Nativos Gerados:</text>
+  <text x="427" y="328" text-anchor="middle" class="code">lib0.o + devc.o (.tar)</text>
+
+  <path d="M 552 227 L 584 227" class="arrow" marker-end="url(#arrow3)" />
+
+  <!-- Step 3: Gradle Build APK -->
+  <rect x="589" y="90" width="240" height="275" rx="10" fill="#1e293b" stroke="#38bdf8" stroke-width="2" />
+  <text x="709" y="116" text-anchor="middle" class="box-title">3. Empacotamento Gradle</text>
+  <text x="709" y="136" text-anchor="middle" class="code">gradlew.bat assembleDebug</text>
+  <text x="603" y="164" class="box-text">• App Kotlin + Jetpack Compose</text>
+  <text x="603" y="186" class="box-text">• Módulo :mlc4j (Bindings JNI</text>
+  <text x="603" y="202" class="box-text">  org.apache.tvm + MLCEngine)</text>
+  <text x="603" y="226" class="box-text">• Biblioteca Nativa C++/OpenCL:</text>
+  <text x="608" y="244" class="code">libtvm4j_runtime_packed.so</text>
+  <text x="603" y="268" class="box-text">• Config: mlc-app-config.json</text>
+  <rect x="603" y="286" width="212" height="60" rx="6" fill="#0f172a" />
+  <text x="709" y="308" text-anchor="middle" class="box-text" fill="#38bdf8">Instalador Gerado:</text>
+  <text x="709" y="328" text-anchor="middle" class="code">qwen2.5-mlc-chat.apk</text>
+
+  <path d="M 829 227 L 861 227" class="arrow" marker-end="url(#arrow3)" />
+
+  <!-- Step 4: Smartphone Offline Execution -->
+  <rect x="866" y="90" width="234" height="275" rx="10" fill="#1e293b" stroke="#4ade80" stroke-width="2.5" />
+  <text x="983" y="116" text-anchor="middle" class="box-title">4. Smartphone (Offline)</text>
+  <text x="983" y="136" text-anchor="middle" class="code">adb install &amp; adb push</text>
+  <text x="880" y="164" class="box-text">• Instala APK via cabo USB</text>
+  <text x="880" y="186" class="box-text">• Envia shards params_shard_*.bin</text>
+  <text x="880" y="202" class="box-text">  para /data/local/tmp</text>
+  <text x="880" y="226" class="box-text">• run-as ai.mlc.mlcchat copia</text>
+  <text x="880" y="242" class="box-text">  para application.filesDir</text>
+  <text x="880" y="258" class="box-text">  (Compatível Scoped Storage!)</text>
+  <rect x="880" y="286" width="206" height="60" rx="6" fill="#0f172a" stroke="#4ade80" stroke-width="1" />
+  <text x="983" y="308" text-anchor="middle" class="box-title" fill="#4ade80">100% Offline ✈️</text>
+  <text x="983" y="328" text-anchor="middle" class="box-text">GPU Mobile OpenCL</text>
+</svg>

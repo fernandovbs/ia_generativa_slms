@@ -1,0 +1,13 @@
+services:
+  mlc-compiler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: slm-mlc-compiler:latest
+    container_name: slm-mlc-compiler
+    volumes:
+      # Monta o modelo Hugging Face original (precisa de escrita pois o mlc_llm gera model.safetensors.index.json)
+      - ../models/qwen2.5-0.5b-hf:/workspace/model_hf
+      # Diretório de saída onde serão gravados os pesos quantizados (q4f16_1) e a lib compilada para Android
+      - ../models/qwen2.5-0.5b-mlc:/workspace/dist
+    mem_limit: 6g

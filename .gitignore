@@ -1,0 +1,22 @@
+# Ambientes virtuais e caches do Python / Jupyter
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Artefatos pesados de modelos (gerados/baixados automaticamente pelas células do Notebook)
+models/
+
+# APKs compilados (>100 MB, limite do GitHub; gerados localmente pelo Passo 3.3 no Gradle)
+demo3_android_mlc/*.apk
+demo3_android_mlc/mlc-llm-src/android/MLCChat/app/build/
+demo3_android_mlc/mlc-llm-src/android/MLCChat/build/
+demo3_android_mlc/mlc-llm-src/android/MLCChat/.gradle/
+demo3_android_mlc/mlc-llm-src/android/mlc4j/build/
+demo3_android_mlc/mlc-llm-src/android/MLCChat/local.properties
+
+# Arquivos temporários do SO
+.DS_Store
+Thumbs.db

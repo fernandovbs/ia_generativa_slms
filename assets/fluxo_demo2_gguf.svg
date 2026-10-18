@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 380" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; rx: 16px; }
+      .title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 19px; font-weight: 700; fill: #4ade80; }
+      .subtitle { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; fill: #94a3b8; }
+      .box-title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; font-weight: 700; fill: #f8fafc; }
+      .box-text { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11.5px; fill: #cbd5e1; }
+      .code { font-family: 'Consolas', monospace; font-size: 11px; fill: #86efac; }
+      .arrow { stroke: #4ade80; stroke-width: 2.2; fill: none; }
+    </style>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#4ade80" />
+    </marker>
+  </defs>
+
+  <rect width="1120" height="380" class="bg" />
+  <text x="560" y="36" text-anchor="middle" class="title">Demo 2 — Pipeline Local com llama.cpp (GGUF Q8_0), Ollama e Open WebUI</text>
+  <text x="560" y="58" text-anchor="middle" class="subtitle">Empacotamento em Arquivo Único com Memory-Mapping (mmap) e Ecossistema de Chat Portável em Docker</text>
+
+  <!-- Step 1: HF to GGUF -->
+  <rect x="25" y="95" width="250" height="245" rx="10" fill="#1e293b" stroke="#64748b" stroke-width="2" />
+  <text x="150" y="122" text-anchor="middle" class="box-title">1. Conversão &amp; Quantização</text>
+  <text x="150" y="142" text-anchor="middle" class="code">convert_hf_to_gguf.py</text>
+  <text x="40" y="172" class="box-text">• Entrada: model.safetensors</text>
+  <text x="40" y="192" class="box-text">  (BF16 — 942.3 MB)</text>
+  <text x="40" y="218" class="box-text">• Quantização por blocos de</text>
+  <text x="40" y="234" class="box-text">  8 bits (--outtype q8_0)</text>
+  <text x="40" y="260" class="box-text">• Embute Tokenizer + Metadados</text>
+  <text x="40" y="276" class="box-text">  + Pesos em 1 único binário:</text>
+  <rect x="40" y="292" width="220" height="34" rx="6" fill="#0f172a" />
+  <text x="150" y="314" text-anchor="middle" class="code">qwen2.5-0.5b.gguf (506 MB)</text>
+
+  <path d="M 275 215 L 315 215" class="arrow" marker-end="url(#arrow2)" />
+
+  <!-- Step 2: Modelfile -->
+  <rect x="320" y="95" width="235" height="245" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="2" />
+  <text x="437" y="122" text-anchor="middle" class="box-title">2. Receita Modelfile</text>
+  <text x="437" y="142" text-anchor="middle" class="code">ollama create qwen25-slm</text>
+  <text x="335" y="172" class="box-text">• FROM /models_in/...gguf</text>
+  <text x="335" y="196" class="box-text">• PARAMETER num_ctx 16384</text>
+  <text x="335" y="212" class="box-text">  (Suporta prompts longos)</text>
+  <text x="335" y="236" class="box-text">• PARAMETER num_predict 2048</text>
+  <text x="335" y="260" class="box-text">• SYSTEM Prompt em Português</text>
+  <text x="335" y="284" class="box-text">• Template ChatML nativo:</text>
+  <text x="335" y="304" class="code">&lt;|im_start|&gt;...&lt;|im_end|&gt;</text>
+
+  <path d="M 555 215 L 595 215" class="arrow" marker-end="url(#arrow2)" />
+
+  <!-- Step 3: Docker Compose Stack -->
+  <rect x="600" y="80" width="495" height="275" rx="12" fill="#0b1120" stroke="#4ade80" stroke-width="2.5" stroke-dasharray="6,4" />
+  <text x="847" y="105" text-anchor="middle" class="box-title" fill="#4ade80">3. Rede Docker Isolada (demo2_local_gguf/docker-compose.yml)</text>
+
+  <!-- Ollama Container -->
+  <rect x="620" y="125" width="220" height="210" rx="8" fill="#1e293b" stroke="#4ade80" stroke-width="1.5" />
+  <text x="730" y="148" text-anchor="middle" class="box-title">Container slm-ollama</text>
+  <text x="730" y="168" text-anchor="middle" class="code">Host :11435 → :11434</text>
+  <text x="632" y="195" class="box-text">• Motor C/C++ llama.cpp</text>
+  <text x="632" y="215" class="box-text">• Carrega GGUF via mmap</text>
+  <text x="632" y="235" class="box-text">• Instruções SIMD AVX2 /</text>
+  <text x="632" y="251" class="box-text">  ARM NEON na CPU ou GPU</text>
+  <text x="632" y="275" class="box-text">• Sem conflito com Ollama</text>
+  <text x="632" y="291" class="box-text">  instalado no host (:11434)</text>
+
+  <!-- Open WebUI Container -->
+  <rect x="860" y="125" width="215" height="210" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5" />
+  <text x="967" y="148" text-anchor="middle" class="box-title">Container slm-open-webui</text>
+  <text x="967" y="168" text-anchor="middle" class="code">http://localhost:3000</text>
+  <text x="872" y="195" class="box-text">• Interface Chat estilo ChatGPT</text>
+  <text x="872" y="215" class="box-text">• Conecta internamente via</text>
+  <text x="872" y="233" class="code">http://ollama:11434</text>
+  <text x="872" y="257" class="box-text">• WEBUI_AUTH=false</text>
+  <text x="872" y="277" class="box-text">• Streaming em tempo real</text>
+  <text x="872" y="297" class="box-text">• Histórico e Markdown</text>
+
+  <path d="M 840 230 L 860 230" class="arrow" marker-end="url(#arrow2)" />
+</svg>

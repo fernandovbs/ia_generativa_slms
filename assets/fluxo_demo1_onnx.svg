@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 390" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; rx: 16px; }
+      .title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 19px; font-weight: 700; fill: #38bdf8; }
+      .subtitle { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; fill: #94a3b8; }
+      .box-title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; font-weight: 700; fill: #f8fafc; }
+      .box-text { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11.5px; fill: #cbd5e1; }
+      .code { font-family: 'Consolas', monospace; font-size: 11px; fill: #7dd3fc; }
+      .arrow { stroke: #38bdf8; stroke-width: 2.2; fill: none; }
+    </style>
+    <marker id="arrow1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+    </marker>
+  </defs>
+
+  <rect width="1120" height="390" class="bg" />
+  <text x="560" y="36" text-anchor="middle" class="title">Demo 1 — Pipeline de Exportação ONNX e Microsserviço FastAPI (KV-Cache Explícito)</text>
+  <text x="560" y="58" text-anchor="middle" class="subtitle">Separação total entre Ambiente de Treino/Exportação (PyTorch) e Container de Produção (ONNX Runtime Puro)</text>
+
+  <!-- Step 1: Export -->
+  <rect x="25" y="95" width="240" height="250" rx="10" fill="#1e293b" stroke="#64748b" stroke-width="2" />
+  <text x="145" y="122" text-anchor="middle" class="box-title">1. Ambiente do Notebook</text>
+  <text x="145" y="142" text-anchor="middle" class="code">ORTModelForCausalLM</text>
+  <text x="40" y="172" class="box-text">• Lê pesos PyTorch/HF</text>
+  <text x="40" y="194" class="box-text">• Faz trace simbólico do</text>
+  <text x="40" y="210" class="box-text">  Transformer + Atenção GQA</text>
+  <text x="40" y="232" class="box-text">• Exporta entradas e saídas</text>
+  <text x="40" y="248" class="box-text">  explícitas de KV-Cache:</text>
+  <text x="45" y="270" class="code">past_key_values.0..23</text>
+  <text x="45" y="288" class="code">present.0..23.key/value</text>
+  <text x="40" y="318" class="box-text" fill="#fbbf24">Gera: model.onnx (FP32)</text>
+
+  <path d="M 265 220 L 305 220" class="arrow" marker-end="url(#arrow1)" />
+
+  <!-- Step 2: Docker Container -->
+  <rect x="310" y="80" width="510" height="280" rx="12" fill="#0b1120" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="6,4" />
+  <text x="565" y="105" text-anchor="middle" class="box-title" fill="#38bdf8">2. Container Docker (slm-onnx-api — Sem PyTorch!)</text>
+
+  <!-- Prefill Box -->
+  <rect x="330" y="125" width="225" height="105" rx="8" fill="#1e293b" stroke="#0284c7" stroke-width="1.5" />
+  <text x="442" y="148" text-anchor="middle" class="box-title">Fase A: Prefill (Prompt)</text>
+  <text x="342" y="170" class="box-text">• input_ids: [1, seq_len]</text>
+  <text x="342" y="190" class="box-text">• past_kv: tensor vazio [0]</text>
+  <text x="342" y="210" class="box-text">• Calcula todo o contexto inicial</text>
+
+  <!-- Decode Box -->
+  <rect x="575" y="125" width="225" height="105" rx="8" fill="#1e293b" stroke="#0284c7" stroke-width="1.5" />
+  <text x="687" y="148" text-anchor="middle" class="box-title">Fase B: Decode (1 a 1)</text>
+  <text x="587" y="170" class="box-text">• input_ids: [1, 1] (novo token)</text>
+  <text x="587" y="190" class="box-text">• Reutiliza present → past_kv</text>
+  <text x="587" y="210" class="box-text">• Complexidade O(1) por passo!</text>
+
+  <path d="M 555 177 L 575 177" class="arrow" marker-end="url(#arrow1)" />
+
+  <!-- ORT Engine Box -->
+  <rect x="330" y="248" width="470" height="92" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5" />
+  <text x="565" y="272" text-anchor="middle" class="box-title">ONNX Runtime (ort.InferenceSession + ORT_ENABLE_ALL)</text>
+  <text x="345" y="295" class="box-text">• Fusão de operadores em C++ (CPUExecutionProvider / intra_op_num_threads=4)</text>
+  <text x="345" y="315" class="box-text">• Amostragem com Temperatura / Top-P / Greedy diretamente em NumPy</text>
+
+  <path d="M 820 220 L 860 220" class="arrow" marker-end="url(#arrow1)" />
+
+  <!-- Step 3: Client / Swagger -->
+  <rect x="865" y="95" width="230" height="250" rx="10" fill="#1e293b" stroke="#4ade80" stroke-width="2" />
+  <text x="980" y="122" text-anchor="middle" class="box-title">3. Consumo HTTP / REST</text>
+  <text x="980" y="145" text-anchor="middle" class="code">http://localhost:8000</text>
+  <text x="885" y="178" class="box-text">• GET /health</text>
+  <text x="885" y="200" class="box-text">• GET /model-info</text>
+  <text x="885" y="222" class="box-text">• POST /generate</text>
+  <text x="885" y="244" class="box-text">• GET /docs (Swagger UI)</text>
+  <rect x="885" y="268" width="190" height="55" rx="6" fill="#0f172a" />
+  <text x="980" y="290" text-anchor="middle" class="code" fill="#4ade80">Latência + Tokens/s</text>
+  <text x="980" y="308" text-anchor="middle" class="box-text">Retornados no JSON</text>
+</svg>

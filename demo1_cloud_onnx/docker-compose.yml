@@ -1,0 +1,17 @@
+services:
+  slm-onnx-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: slm-onnx-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Monta a pasta do modelo ONNX exportado pelo Jupyter Notebook dentro do container
+      - ../models/qwen2.5-0.5b-onnx:/app/model_onnx:ro
+    environment:
+      - ONNX_MODEL_DIR=/app/model_onnx
+      - ORT_PROVIDER=CPUExecutionProvider
+      - ORT_NUM_THREADS=4
+    mem_limit: 4g
+    restart: unless-stopped
