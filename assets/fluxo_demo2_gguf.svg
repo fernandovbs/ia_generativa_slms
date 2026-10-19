@@ -37,7 +37,7 @@
   <rect x="320" y="95" width="235" height="245" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="2" />
   <text x="437" y="122" text-anchor="middle" class="box-title">2. Receita Modelfile</text>
   <text x="437" y="142" text-anchor="middle" class="code">ollama create qwen25-slm</text>
-  <text x="335" y="172" class="box-text">• FROM /models_in/...gguf</text>
+  <text x="335" y="172" class="box-text">• FROM /models/...gguf</text>
   <text x="335" y="196" class="box-text">• PARAMETER num_ctx 16384</text>
   <text x="335" y="212" class="box-text">  (Suporta prompts longos)</text>
   <text x="335" y="236" class="box-text">• PARAMETER num_predict 2048</text>

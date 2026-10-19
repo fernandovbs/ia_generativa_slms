@@ -1,4 +1,4 @@
-FROM ./qwen2.5-0.5b-instruct.gguf
+FROM /models/qwen2.5-0.5b-instruct.gguf
 
 # Tamanho da janela de contexto (16384 tokens para comportar qualquer histórico/ferramentas do Open WebUI)
 PARAMETER num_ctx 16384
