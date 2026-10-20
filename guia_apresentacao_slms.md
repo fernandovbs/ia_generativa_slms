@@ -1,9 +1,3 @@
-# 🎓 Guia Completo de Estudo e Apresentação: Deploy Prático de SLMs
-
-Este documento foi preparado para ser o seu **manual de domínio técnico** durante a apresentação do Mestrado. Aqui estão explicados, de forma didática e profunda, **todos os termos que aparecem nos diagramas**, **o porquê de cada decisão arquitetural** e **como responder a possíveis perguntas da banca/audiência**.
-
----
-
 ## 📌 Parte 1: O que significam as Precisões Numéricas e Quantizações?
 *(Presentes no Diagrama 1: `FP32`, `BF16`, `Q8_0`, `q4f16_1`)*
 
