@@ -1,183 +1,172 @@
-## 📌 Parte 1: O que significam as Precisões Numéricas e Quantizações?
-*(Presentes no Diagrama 1: `FP32`, `BF16`, `Q8_0`, `q4f16_1`)*
+# 📘 Guia Técnico e Arquitetural: Deploy de Small Language Models (SLMs)
+### Fundamentos de Otimização, Formatos de Precisão e Engenharia de Inferência (Cloud, Local e Mobile)
 
-Uma rede neural como o `Qwen2.5-0.5B-Instruct` possui cerca de **490 milhões de parâmetros (pesos)** — que nada mais são do que números reais dentro de matrizes que multiplicam os vetores de entrada. O **tamanho do modelo no disco e na memória RAM** depende diretamente de **quantos bits usamos para guardar cada um desses 490 milhões de números**:
+Este documento reúne os conceitos teóricos, matemáticos e de engenharia de software utilizados no projeto de deploy do modelo **`Qwen2.5-0.5B-Instruct`** (e sua variante **`Qwen2.5-1.5B-Instruct`**). O objetivo deste guia é fornecer uma referência completa e independente para desenvolvedores, pesquisadores e engenheiros que queiram entender e reproduzir as três arquiteturas de inferência implementadas no repositório:
 
-```
-490 milhões de pesos × Bytes por peso ≈ Tamanho do Modelo
-```
+1. **☁️ Nuvem / Microsserviço de Produção (Demo 1):** ONNX Runtime (`CPUExecutionProvider`) + FastAPI + Docker.
+2. **💻 Edge Local / Desktop (Demo 2):** Quantização GGUF (`Q8_0`) via `llama.cpp` + Ollama + Open WebUI.
+3. **📱 Borda Extrema / Smartphone Android (Demo 3):** Compilação nativa via MLC LLM e Apache TVM (`q4f16_1` + OpenCL) + App Nativo (APK) com provisionamento offline.
+
+---
+
+## 📌 Parte 1: Precisões Numéricas e Técnicas de Quantização
+*(Modelos abordados: `FP32`, `BF16`, `Q8_0` e `q4f16_1`)*
+
+Uma arquitetura Transformer como o `Qwen2.5-0.5B-Instruct` possui aproximadamente **490 milhões de parâmetros (pesos)** — valores reais distribuídos em matrizes lineares, projeções de atenção e camadas de feed-forward. O consumo de memória RAM/VRAM e o espaço em disco dependem diretamente do número de bits dedicados à representação de cada peso:
+
+$$\text{Tamanho dos Pesos em Memória} \approx \text{Número de Parâmetros} \times \text{Bytes por Parâmetro}$$
 
 ### 1. `FP32` (*Floating Point 32-bit* / Precisão Simples) — **~1890 MB** (Demo 1 - ONNX)
-- **O que é:** É o formato padrão de ponto flutuante da computação científica (1 bit de sinal, 8 bits de expoente, 23 bits de mantissa/fração = **32 bits = 4 bytes por peso**).
-- **Conta rápida:** $490 \times 10^6 \text{ pesos} \times 4\text{ bytes} \approx 1,96\text{ GB}$ ($\approx 1890\text{ MB}$).
-- **Por que aparece na Demo 1?** Quando exportamos o modelo para `.onnx` visando rodar em **CPU de servidor (`CPUExecutionProvider`)**, o `FP32` é o formato nativo mais universal das unidades vetoriais (AVX2/AVX-512) de qualquer processador x86 sem depender de instruções especiais de placa de vídeo.
+- **Definição:** Padrão clássico de ponto flutuante do padrão IEEE 754 (1 bit de sinal, 8 bits de expoente e 23 bits de mantissa = **32 bits = 4 bytes por parâmetro**).
+- **Cálculo de escala:** $490 \times 10^6 \times 4\text{ bytes} \approx 1,96\text{ GB}$ (resultando em um arquivo `model.onnx_data` de $\approx 1889\text{ MB}$).
+- **Aplicação no projeto:** Utilizado na exportação ONNX para execução em **CPU de servidores x86/ARM (`CPUExecutionProvider`)**. Na CPU, operações vetoriais em `FP32` são suportadas nativamente por conjuntos de instruções como AVX2 e AVX-512, garantindo precisão numérica total e compatibilidade universal sem necessidade de aceleração por GPU.
 
-### 2. `BF16` (*Brain Floating Point 16-bit*) — **~942 MB** (Modelo Base Original na Hugging Face)
-- **O que é:** Formato de **16 bits (2 bytes por peso)** criado pelo Google Brain especificamente para Deep Learning.
-- **Qual a diferença entre `FP16` e `BF16`?**
-  - O `FP16` tradicional reduz o expoente para 5 bits (o que causa *overflow/underflow*, isto é, números muito grandes viram `Inf` durante o treino).
-  - O **`BF16` mantém os mesmos 8 bits de expoente do `FP32`** (mesmo alcance dinâmico!), cortando apenas as casas decimais da mantissa (de 23 para 7 bits).
-- **Conta rápida:** Como usa 2 bytes por peso (metade do `FP32`), o arquivo `model.safetensors` original da Hugging Face tem exatamente a metade do tamanho: **~942,3 MB**.
+### 2. `BF16` (*Brain Floating Point 16-bit*) — **~942 MB** (Pesos Originais Hugging Face)
+- **Definição:** Formato de ponto flutuante de **16 bits (2 bytes por parâmetro)** criado pelo Google Brain especificamente para Deep Learning.
+- **Diferença entre `FP16` e `BF16`:**
+  - O `FP16` tradicional reduz o expoente para 5 bits e a mantissa para 10 bits. Isso diminui o alcance dinâmico, facilitando problemas de *underflow/overflow* (valores muito pequenos viram zero e valores altos viram infinito).
+  - O **`BF16` mantém exatamente os mesmos 8 bits de expoente do `FP32`** (preservando o alcance dinâmico de magnitudes), reduzindo apenas a precisão das casas decimais da mantissa (de 23 para 7 bits).
+- **Cálculo de escala:** Com 2 bytes por parâmetro, o arquivo original `model.safetensors` ocupa exatamente a metade do tamanho em relação ao FP32: **~942,3 MB**.
 
-### 3. `Q8_0` (*Quantização Inteira de 8 bits por Bloco*) — **~506 MB** (Demo 2 - GGUF / Ollama)
-- **O que é:** Em vez de guardar números com vírgula (ponto flutuante de 16 ou 32 bits), arredondamos os pesos para **números inteiros de 8 bits com sinal (`int8`, que vão de `-127` a `+127` = 1 byte por peso)**.
-- **O que significa o `_0` e "por bloco" no `Q8_0`?**
-  - Se usássemos uma única escala para a matriz inteira, um único valor extremo (*outlier*) estragaria a precisão de todos os outros pesos.
-  - Por isso, o `llama.cpp` divide os pesos em **pequenos blocos de 32 números consecutivos**. Para cada bloco de 32 números `int8`, ele guarda **1 único fator de escala (`delta` em `FP16`)**.
-  - Na hora de calcular, o processador multiplica o inteiro pelo fator de escala: $\text{Peso Real} \approx \text{int8} \times \text{escala}$. (O sufixo `_0` significa quantização *simétrica*, sem ponto-zero/offset adicional).
-- **Resultado prático:** Reduz o tamanho para **~506 MB** (73% menor que o `FP32`) com **perda de qualidade virtualmente zero**.
+### 3. `Q8_0` (*Quantização Inteira Simétrica de 8 bits por Bloco*) — **~506 MB** (Demo 2 - GGUF / Ollama)
+- **Definição:** Mapeamento de matrizes de ponto flutuante em **inteiros de 8 bits com sinal (`int8`, faixa de `-127` a `+127` = 1 byte por peso)**.
+- **O significado de "quantização em bloco" (`_0`):**
+  - Se um único fator de escala fosse aplicado à matriz inteira, a presença de tensores discrepantes (*outliers*) degradaria a representação dos demais pesos.
+  - Para evitar essa distorção, o `llama.cpp` subdivide as matrizes em **pequenos blocos contíguos de 32 números**. Para cada bloco de 32 inteiros `int8`, armazena-se **1 fator de escala (`delta`) em `FP16`**.
+  - Durante o cálculo, a aproximação é dada por: $\text{Peso Real} \approx \text{int8} \times \text{delta}$. O sufixo `_0` indica quantização simétrica em torno do zero (sem offset adicional).
+- **Impacto prático:** Redução do consumo de disco e RAM para **~506 MB** (-73% em relação ao `FP32`) com degradação de perplexidade praticamente imperceptível.
 
 ### 4. `q4f16_1` (*Quantização em Grupo de 4 bits com Ativações FP16*) — **~265 MB** (Demo 3 - Android MLC)
-- **O que o nome `q4f16_1` significa letra por letra?**
-  - **`q4`**: Os pesos da rede são comprimidos em inteiros de **apenas 4 bits** (`int4`, apenas 16 valores possíveis por peso = **0,5 byte por peso**!).
-  - **`f16`**: O fator de escala de cada grupo de 32 pesos e as **ativações/cálculos em tempo de execução** na GPU do celular rodam em `float16` (`f16`).
-  - **`_1`**: Esquema de quantização por grupo assimétrico/otimizado do MLC LLM onde **8 pesos de 4 bits são empacotados dentro de um único inteiro de 32 bits (`uint32`)**.
-- **Por que fazemos isso no celular?** Em smartphones, o maior gargalo **não é a velocidade de cálculo da GPU, e sim a largura de banda da memória RAM** (ler os pesos da memória para o chip). Ler 265 MB (`q4f16_1`) da memória do celular é **7 vezes mais rápido** do que ler 1890 MB (`FP32`), além de economizar bateria e não travar o Android!
+- **Significado da nomenclatura:**
+  - **`q4`**: Os pesos da rede são quantizados em inteiros de **apenas 4 bits** (`int4`, permitindo 16 valores possíveis por peso = **0,5 byte por parâmetro**).
+  - **`f16`**: O fator de escala de cada grupo e os cálculos dinâmicos das ativações do Transformer rodam em ponto flutuante de 16 bits (`float16`).
+  - **`_1`**: Formato de empacotamento otimizado do MLC LLM, onde **8 pesos de 4 bits são agrupados dentro de um único inteiro de 32 bits (`uint32`)**.
+- **Relevância em dispositivos móveis:** Em smartphones, a capacidade de cálculo bruto (*FLOPS*) das GPUs mobile é frequentemente limitada pela **largura de banda da memória RAM compartilhada (LPDDR)**. Carregar 265 MB de pesos da memória para os registradores da GPU é **7 vezes mais rápido** do que carregar 1890 MB, resultando em menor consumo energético e taxas de geração fluidas.
 
 ---
 
-## 📌 Parte 2: O que é `GQA` (Grouped-Query Attention: 14 Q-Heads / 2 KV-Heads)?
-*(Presente no cartão laranja do Modelo Base no Diagrama 1 e na inspeção da Demo 1)*
+## 📌 Parte 2: Arquitetura de Atenção GQA (*Grouped-Query Attention*)
 
-- No mecanismo de **Atenção (*Self-Attention*)** de um Transformer, cada palavra gera três vetores:
-  - **Q (*Query* / Consulta):** O que o token atual está procurando.
-  - **K (*Key* / Chave):** O "rótulo" de cada token passado.
-  - **V (*Value* / Valor):** O conteúdo de informação de cada token passado.
-- Nos primeiros Transformers (*Multi-Head Attention — MHA*), se o modelo tinha 14 cabeças de consulta (`Q`), ele também tinha 14 cabeças de chave (`K`) e 14 de valor (`V`). Isso gastava muita memória de **KV-Cache**.
-- O `Qwen2.5-0.5B` usa **GQA (*Grouped-Query Attention*)**: ele mantém **14 cabeças de *Query*** (preservando a capacidade de raciocínio), mas agrupa todas elas para compartilharem **apenas 2 cabeças de *Key* e 2 de *Value***.
-- **Por que isso é importante citar na apresentação?** Porque reduz o tamanho da memória de conversa (**KV-Cache**) em **7 vezes** ($14 / 2 = 7$), o que viabiliza rodar janelas de contexto grandes em CPU e celular!
+Nos primeiros modelos Transformer (*Multi-Head Attention* — MHA), para cada cabeça de consulta (*Query* - $Q$), existia um par correspondente de cabeça de chave (*Key* - $K$) e cabeça de valor (*Value* - $V$). Em modelos generativos longos, armazenar todas as chaves e valores na memória durante o diálogo (*KV-Cache*) tornava-se o principal vilão de consumo de RAM.
 
----
+O `Qwen2.5-0.5B` implementa **Grouped-Query Attention (GQA)**:
+* **Cabeças de Consulta ($Q$):** Mantém **14 cabeças**, garantindo expressividade e capacidade de atenção refinada.
+* **Cabeças de Chave e Valor ($KV$):** Agrupa as 14 consultas para compartilharem **apenas 2 cabeças de $K$ e 2 cabeças de $V$**.
 
-## 📌 Parte 3: Conceitos da Demo 1 (ONNX Runtime + FastAPI)
+```
+[Q0, Q1, Q2, Q3, Q4, Q5, Q6] ──────► Compartilham KV_Head_0
+[Q7, Q8, Q9, Q10, Q11, Q12, Q13] ───► Compartilham KV_Head_1
+```
 
-### 1. Por que convertemos o Modelo para `.onnx`, mas usamos o `Tokenizer` nativo da Hugging Face? Como eles funcionam juntos?
-Essa é uma das perguntas mais importantes de engenharia de IA!
-
-- **Uma LLM em produção é dividida em 3 partes distintas:**
-  ```
-  [Texto Humano] ──► (1. Tokenizer) ──► [IDs Numéricos] ──► (2. Rede Neural ONNX) ──► [Logits/IDs] ──► (3. Detokenizer) ──► [Texto Humano]
-  ```
-  1. **Pré-processamento (Tokenizer):** É um algoritmo de dicionário e regras de texto (chamado *Byte-Level BPE — Byte-Pair Encoding*) junto com o template **ChatML** (`<|im_start|>user...`). Ele **não tem pesos de rede neural nem multiplicação de matrizes**; ele apenas converte a string `"Olá mundo"` em uma lista de números inteiros: `[151644, 872, 198, ...]`.
-  2. **O Cérebro (Rede Neural / Grafo `.onnx`):** O arquivo `model.onnx` **não sabe o que é uma letra ou uma palavra**. Ele é uma função puramente matemática que recebe matrizes de números inteiros (`input_ids`) e devolve um vetor de probabilidades (`logits`) para os 151.936 números do vocabulário.
-  3. **Pós-processamento (Detokenizer):** Pega o número inteiro escolhido (ex.: `ID 45912`) e olha na tabela `tokenizer.json` a qual sílaba/palavra ele corresponde.
-- **Por que mantemos o `AutoTokenizer` da Hugging Face junto com o `onnxruntime`?**
-  - Porque o `tokenizers` da Hugging Face já é escrito internamente em **Rust nativo super-rápido**, ocupa poucos megabytes e **não depende do PyTorch**!
-  - Assim, no container de produção (`main.py`), o `AutoTokenizer` faz a ponte `Texto ↔ Números Inteiros`, enquanto o `onnxruntime.InferenceSession` faz todo o trabalho pesado de rede neural (`Números → Probabilidades do Próximo Token`).
-
-### 2. O que são "Fase A: Prefill" e "Fase B: Decode"?
-*(Presentes no Diagrama da Demo 1)*
-
-Quando você envia uma pergunta para um modelo gerador de texto, a inferência acontece em **duas fases com comportamentos matemáticos completamente diferentes**:
-
-- **Fase A — *Prefill* (Preenchimento / Leitura do Prompt):**
-  - Imagine que seu prompt tem **50 tokens** (`"Explique em 3 tópicos por que SLMs são ideais..."`).
-  - Na primeira chamada ao modelo (`step == 0` no `main.py`), você já conhece todos esses 50 tokens de uma vez!
-  - Portanto, passamos uma matriz `[1, 50]` para o grafo ONNX. O modelo processa os **50 tokens em paralelo** (operação *Compute-Bound*, dominada por multiplicação Matriz × Matriz), preenche a memória das 24 camadas com as chaves (`K`) e valores (`V`) desses 50 tokens e gera apenas o **1º token da resposta**.
-- **Fase B — *Decode* (Decodificação Autoregressiva, 1 a 1):**
-  - Para gerar o **2º token da resposta**, o modelo depende do 1º token que acabou de sair. Para gerar o 3º, depende do 2º, e assim por diante (*Autoregressivo*).
-  - Portanto, na Fase B, nós fazemos um `for` onde passamos **apenas 1 único token novo por vez** (`input_ids` com shape `[1, 1]`), consultando o histórico já salvo no **KV-Cache**!
-
-### 3. O que são "Entradas e Saídas Explícitas de KV-Cache" (`past_key_values` → `present`)?
-- **Sem KV-Cache:** Se o modelo já escreveu 200 palavras, para gerar a palavra 201 ele teria que ler e recalcular todas as matrizes das 200 palavras anteriores de novo! O tempo cresceria de forma quadrática $O(N^2)$ e o servidor travaria após algumas frases.
-- **Com KV-Cache Explícito no ONNX:**
-  - Como um grafo `.onnx` é **estático e sem estado interno oculto (*stateless*)**, a memória das palavras anteriores precisa entrar e sair explicitamente como parâmetros da função!
-  - Por isso, nosso grafo tem **51 entradas** e **49 saídas**:
-    - Nas entradas, passamos `past_key_values.0.key` até `past_key_values.23.value` (48 tensores contendo o histórico das 24 camadas até o passo anterior).
-    - Nas saídas, o ONNX Runtime nos devolve `present.0.key` até `present.23.value` (os 48 tensores atualizados com o token que acabou de ser lido).
-    - No nosso loop em Python/NumPy (`main.py`), basta fazer `past_kv = present_kv` a cada volta do loop! Assim, cada passo do *Decode* processa **apenas 1 token** ($O(1)$ de cálculo linear), tornando a geração muito rápida.
-
-### 4. O que é "Fusão de Operadores" (*Operator Fusion*) e `ORT_ENABLE_ALL`?
-*(Presente nas Demos 1 e 3)*
-
-- Em uma camada Transformer escrita em PyTorch puro, uma operação simples como `Linear + Bias + Ativação SiLU + Soma Residual` executa **4 operações separadas**:
-  1. A CPU lê a matriz da memória RAM, multiplica e grava o resultado temporário `T1` na RAM.
-  2. A CPU lê `T1` da RAM, soma o *bias* e grava `T2` na RAM.
-  3. A CPU lê `T2` da RAM, aplica a função `SiLU` e grava `T3` na RAM.
-- Esse "vai-e-vem" na memória RAM é lentíssimo!
-- Quando ativamos **`GraphOptimizationLevel.ORT_ENABLE_ALL`** no ONNX Runtime (ou quando compilamos com o **Apache TVM** na Demo 3), o otimizador analisa o grafo inteiro e **funde múltiplos nós em um único kernel C++/OpenCL** (por exemplo: `FusedMatMulAddActivation`).
-- **Resultado:** O dado entra nos registradores ultra-rápidos do processador/GPU uma única vez, sofre todas as operações seguidas sem voltar para a memória RAM, e só grava o resultado final!
+* **Vantagem arquitetural:** O tamanho do KV-Cache é reduzido em **7 vezes** ($14 / 2 = 7$), tornando a retenção de contexto viável em servidores com CPUs modestas e em dispositivos com memória restrita.
 
 ---
 
-## 📌 Parte 4: Conceitos da Demo 2 (GGUF + `llama.cpp` + Ollama + Open WebUI)
+## 📌 Parte 3: Arquitetura da Demo 1 (Nuvem: ONNX Runtime + FastAPI)
 
-### 1. O que é `mmap` (*Memory-Mapped File*) no formato `.gguf`?
-*(Presente no Diagrama da Demo 2)*
+### 1. Separação entre o Grafo `.onnx` e o Tokenizer Rust
+Um pipeline de inferência de LLM em produção é desacoplado em três etapas:
+```
+[Texto] ──► (1. Tokenizer BPE em Rust) ──► [IDs Numéricos] ──► (2. Grafo ONNX C++) ──► [Logits] ──► (3. Detokenizer) ──► [Texto]
+```
+1. **Pré-processamento (Tokenizer):** Algoritmo determinístico baseado em dicionário (*Byte-Level BPE*) e aplicação do template ChatML (`<|im_start|>user...`). Não envolve operações tensoriais pesadas. A biblioteca `tokenizers` da Hugging Face é implementada em Rust nativo e não depende do PyTorch.
+2. **Grafo Computacional (`model.onnx`):** Função matemática pura e compilada em C++ que recebe vetores inteiros (`input_ids`) e gera as probabilidades do vocabulário (`logits`).
+3. **Pós-processamento (Detokenizer):** Mapeia os índices de maior probabilidade de volta para caracteres textuais.
 
-- Na forma tradicional de carregar um arquivo, o programa aloca 506 MB de memória RAM vazia e chama `read()` para copiar todos os bytes do disco para a RAM antes de poder fazer qualquer conta.
-- O formato **`.gguf`** organiza os tensores dentro do arquivo binário já alinhados exatamente como a CPU espera na memória.
-- Assim, o `llama.cpp` (motor interno do Ollama) usa a chamada de sistema **`mmap`** do Linux/Windows: ele apenas aponta a tabela de páginas da memória virtual direto para o arquivo no SSD!
-- **Vantagens para explicar na apresentação:**
-  1. **Carregamento quase instantâneo (*Zero-Copy*):** O modelo fica pronto em fração de segundo.
-  2. **Menor pressão na RAM:** O próprio sistema operacional gerencia o cache de páginas do disco; se faltar RAM no notebook, o SO não precisa duplicar os pesos na área de *swap*.
+Essa separação permite que a imagem Docker de produção não precise carregar o framework PyTorch (economizando de 2 a 4 GB no container), operando exclusivamente com `onnxruntime` e `numpy`.
 
-### 2. O que são instruções `SIMD` (`AVX2` / `ARM NEON`)?
-- **SIMD** significa *Single Instruction, Multiple Data* (Uma Instrução, Múltiplos Dados).
-- Em vez de o processador multiplicar 1 peso por 1 ativação de cada vez, instruções vetoriais como **AVX2** (em processadores Intel/AMD) ou **ARM NEON** (em celulares e Macs M1/M2/M3) carregam **8, 16 ou 32 números quantizados (`Q8_0`) de uma só vez** em um registrador largo de 256 bits e multiplicam todos em **um único ciclo de clock**.
+### 2. Ciclo de Inferência: Fase *Prefill* vs. Fase *Decode*
+A inferência de um modelo de linguagem ocorre em duas fases com características computacionais distintas:
+* **Fase A — *Prefill* (Processamento do Prompt):**
+  - O prompt completo (por exemplo, 50 tokens) é conhecido antecipadamente.
+  - O modelo processa todos os 50 tokens em paralelo em uma única execução matricial contígua (*MatMul* $M \times K \times N$), gerando as ativações de atenção de todas as camadas e prevendo o primeiro token de resposta.
+  - Comportamento: **Compute-Bound** (paralelizável nas threads da CPU).
+* **Fase B — *Decode* (Geração Autorregressiva):**
+  - Para prever o segundo token, o modelo depende do primeiro; para o terceiro, depende do segundo.
+  - A execução passa a ser sequencial: a cada passo alimenta-se **apenas 1 token novo** (`shape=[1, 1]`).
+  - Comportamento: **Memory-Bound** (o gargalo passa a ser a velocidade de leitura dos pesos e do histórico na memória).
 
-### 3. Como funciona a arquitetura dos 2 Containers Docker na Demo 2 (`slm-ollama` + `slm-open-webui`)?
-- No [`demo2_local_gguf/docker-compose.yml`](file:///c:/Users/Pichau/projects/ia_generativa/demo2_local_gguf/docker-compose.yml), subimos dois serviços dentro da mesma rede virtual do Docker:
-  1. **`slm-ollama` (Backend / Engine C++):** Roda o servidor do Ollama onde importamos nosso `.gguf` com o [`Modelfile`](file:///c:/Users/Pichau/projects/ia_generativa/demo2_local_gguf/Modelfile) (`ollama create qwen25-slm-custom -f /models/Modelfile`). Mapeamos a porta `11435` do Windows para a `11434` do container para nunca conflitar caso o PC já tenha um Ollama instalado.
-  2. **`slm-open-webui` (Frontend Web):** É a interface estilo ChatGPT rodando na porta `3000`. Como ambos estão na mesma rede Docker, o Open WebUI conversa com o Ollama pelo endereço interno `http://ollama:11434` sem passar por fora.
-- **Por que colocamos `PARAMETER num_ctx 16384` e `PARAMETER num_predict 2048` no `Modelfile`?**
-  - Quando você digita apenas `"Oi"` no Open WebUI, a interface web envia por trás todo o histórico da conversa e faz chamadas automáticas pedindo para o modelo gerar um título e sugestões de perguntas. Com `num_ctx 16384` (16K tokens de contexto), garantimos que o modelo nunca trave nem corte respostas por falta de janela!
+### 3. Entradas e Saídas Explícitas de KV-Cache
+Como um grafo ONNX exportado é estático e **sem estado interno (*stateless*)**, a memória acumulada dos tokens passados precisa ser fornecida e devolvida explicitamente a cada passo:
+* **Entradas (`past_key_values.X.key/value`):** 48 tensores (24 camadas $\times$ 2 tensores) com o histórico de chaves e valores. No passo inicial (*prefill*), passam-se tensores vazios (`shape=[1, 2, 0, 64]`).
+* **Saídas (`present.X.key/value`):** 48 tensores atualizados pelo grafo com as informações do token recém-processado.
+* **Loop Autorregressivo:** A aplicação Python apenas redireciona `past_kv = present_kv`. Desta forma, o custo de geração de cada novo token permanece $O(1)$ em vez de recalcular todo o passado em $O(N^2)$.
 
----
-
-## 📌 Parte 5: Conceitos da Demo 3 (Mobile Android Nativo com MLC LLM / Apache TVM)
-
-### 1. O que é o Apache TVM / TVM Relax e qual a diferença dele para o ONNX Runtime e o `llama.cpp`?
-*(Presente no Diagrama da Demo 3)*
-
-- O **ONNX Runtime** e o **`llama.cpp`** são **interpretadores/motores genéricos**: eles vêm pré-compilados com uma coleção de funções prontas e leem o arquivo do modelo (`.onnx` ou `.gguf`) em tempo de execução.
-- O **MLC LLM (baseado no compilador Apache TVM Relax)** vai um passo além: ele é um **compilador de redes neurais (*Machine Learning Compiler*)**.
-  - Ele pega a arquitetura específica do `Qwen2.5`, funde a desquantização de 4 bits (`q4f16_1`) com a multiplicação de matrizes (`fused_dequantize_NT_matmul`) e **gera código de máquina customizado (`.o` / `.so`) + *shaders/kernels* OpenCL sob medida** para a GPU do celular!
-
-### 2. O que significa `prefill_chunk_size = 512` e por que a memória caiu de `5365 MB` para `628.8 MB`?
-*(Destaque verde na caixa 1 do Diagrama da Demo 3 — ótimo ponto para impressionar a banca!)*
-
-- Quando rodamos a primeira compilação com os valores padrões de servidor do Qwen2.5 (`context_window_size = 32768` e `prefill_chunk_size = 8192`), o compilador TVM reservou **5052 MB (5 GB!) só de buffer temporário** para conseguir processar 8192 tokens de uma só vez. Em um celular, tentar alocar 5 GB de uma vez faz o Android matar o app na hora (*Out Of Memory*).
-- Ao configurarmos no Passo 3.1:
-  - `--context-window-size 4096` (janela de 4K tokens, mais do que suficiente para chat no celular)
-  - `--prefill-chunk_size 512` (*Chunked Prefill*: se o usuário colar um texto grande de 2000 tokens, a GPU do celular mastiga esse texto em pedacinhos de 512 em 512 tokens)
-- **O resultado medido pelo compilador TVM no Passo 3.2:**
-  - **Pesos do modelo (`Parameters`):** `265.12 MB`
-  - **Buffer temporário (`Temporary buffer`):** caiu de `5052 MB` para **`315.75 MB`**!
-  - **KV-Cache para 4096 tokens:** `48.00 MB` (`0.01 MB` por token)
-  - **Total absoluto de RAM/VRAM no celular:** **`628.87 MB`** (uma redução de **88% de memória**, permitindo rodar liso em qualquer celular intermediário!).
-
-### 3. O que são os arquivos `lib0.o`, `devc.o`, `libtvm4j_runtime_packed.so` e JNI?
-*(Presentes nas caixas 2 e 3 do Diagrama da Demo 3)*
-
-- **`lib0.o` e `qwen2_q4f16_1_devc.o` (dentro do `.tar`):**
-  - `lib0.o`: Código nativo compilado para o processador ARM64 do celular (`aarch64-linux-android`) que orquestra o modelo.
-  - `devc.o`: Contém o bytecode da máquina virtual do TVM (*Relax VM*) e o código-fonte dos kernels **OpenCL** que rodam dentro da placa de vídeo (GPU Adreno/Mali) do smartphone.
-- **JNI (*Java Native Interface*) e `libtvm4j_runtime_packed.so`:**
-  - Aplicativos Android têm sua interface visual escrita em **Kotlin / Jetpack Compose** (que roda na máquina virtual Java/ART do Android), mas o motor de IA é escrito em **C++ / OpenCL**.
-  - O módulo `:mlc4j` usa **JNI** para fazer a ponte entre o Kotlin (`MLCEngine.kt` → `JSONFFIEngine.java` → `org.apache.tvm.LibInfo`) e a biblioteca C++ nativa `libtvm4j_runtime_packed.so` empacotada dentro do `.apk`.
-
-### 4. Como funciona o Provisionamento 100% Offline via USB (`adb`) e o *Scoped Storage* do Android 14/15?
-*(Presente na caixa 4 do Diagrama da Demo 3)*
-
-- **O desafio de apresentar ao vivo:** Em uma apresentação de mestrado, depender do Wi-Fi da sala para o celular baixar 800 MB de pesos do Hugging Face é arriscado. Além disso, embutir centenas de megabytes comprimidos dentro do `.apk` dobra o gasto de armazenamento no celular.
-- **Como resolvemos no Passo 3.4:**
-  1. O script instala o aplicativo ([`qwen2.5-mlc-chat.apk`](file:///c:/Users/Pichau/projects/ia_generativa/demo3_android_mlc/qwen2.5-mlc-chat.apk)) via cabo USB (`adb install -r`).
-  2. Envia os shards quantizados (`params_shard_*.bin` e `mlc-chat-config.json`) via USB (`adb push`) para a pasta temporária `/data/local/tmp/` do Android.
-  3. **O pulo do gato do Android 14/15 (`run-as ai.mlc.mlcchat`):** No Android moderno, o sistema de segurança (*Scoped Storage* / SELinux) proíbe que um aplicativo leia arquivos que foram criados pelo usuário `shell` do `adb push` (gerando o erro `EACCES: Permission denied`). Ao executarmos `adb shell run-as ai.mlc.mlcchat cp -r ... files/`, o Android assume a identidade do próprio usuário interno do aplicativo (`u0_a500`) e copia os pesos para o armazenamento interno privado do app (`application.filesDir`).
-  4. Assim, quando o app abre, ele encontra todos os arquivos já indexados com permissão total e libera o botão de **Chat 100% Offline** imediatamente (funcionando até em **Modo Avião**)!
+### 4. Fusão de Operadores (*Operator Fusion*)
+Em frameworks interpretados, uma camada de normalização e ativação tradicional executa múltiplas leituras e escritas consecutivas na memória RAM (`Linear` $\to$ RAM $\to$ `BiasAdd` $\to$ RAM $\to$ `SiLU` $\to$ RAM).
+Ao habilitar `GraphOptimizationLevel.ORT_ENABLE_ALL` no ONNX Runtime:
+* Nós adjacentes são fundidos em um único kernel de baixo nível (ex.: `FusedMatMulAddSiLU`).
+* Os dados intermediários permanecem nos registradores rápidos do processador, minimizando a latência de acesso à RAM.
 
 ---
 
-## 🎤 Roteiro Rápido (Passo a Passo) para o Dia da Apresentação
+## 📌 Parte 4: Arquitetura da Demo 2 (Edge Local: GGUF + llama.cpp + Ollama)
 
-1. **Abertura (Célula 0 e Bloco 0):**
-   - Mostre o **Diagrama 1 (`fluxo_geral_slms.svg`)** explicando a tese central: *"Vamos pegar um único SLM de 490 milhões de parâmetros e provar como técnicas de compilação e quantização permitem rodá-lo na Nuvem (FP32), no Notebook (GGUF 8-bit) e dentro de um Smartphone Android offline (MLC 4-bit), sempre com Zero PyTorch em produção."*
-2. **Demo 1 — Cloud / Microsserviço (Células 3 a 17):**
-   - Mostre o **Diagrama da Demo 1**, rode a inspeção do grafo ONNX (mostrando as 51 entradas do KV-Cache e o GQA), suba o container `slm-onnx-api`, mostre o **Swagger UI em `http://localhost:8000/docs`** e dispare o `POST /generate` no notebook.
-3. **Demo 2 — Notebook Local (Células 18 a 28):**
-   - Mostre o **Diagrama da Demo 2**, destaque a queda de tamanho de **1890 MB para 506 MB** na conversão para `.gguf` (`Q8_0`), suba os containers `slm-ollama` e `slm-open-webui`, rode a célula do `/api/chat` e abra a interface visual estilo ChatGPT em **`http://localhost:3000`**.
-4. **Demo 3 — Android Nativo Offline (Células 29 a 38):**
-   - Mostre o **Diagrama da Demo 3**, rode a tabela comparativa (chegando aos **265 MB** em 4 bits `q4f16_1`), mostre a compilação TVM reduzindo a RAM para **628 MB**, gere/valide o `.apk` com o Gradle e, com o celular plugado no USB (ou já instalado), mostre o chat rodando diretamente na tela do seu telefone em **Modo Avião**!
-5. **Fechamento (Célula 38):**
-   - Comente brevemente a alternativa com `onnxruntime-android` (para equipes que querem manter um único formato `.onnx` em tudo) vs. `MLC LLM` (para máxima performance OpenCL em GPUs mobile) e encerre com a tabela comparativa final.
+### 1. Mapeamento de Memória via `mmap` (*Memory-Mapped File*)
+* Tradicionalmente, o carregamento de modelos envolve ler os bytes do disco via `fread()` e copiá-los para novos buffers alocados na RAM.
+* O formato **`.gguf`** armazena os tensores alinhados em páginas de memória diretamente compatíveis com as estruturas de hardware.
+* O motor `llama.cpp` utiliza a chamada de sistema **`mmap()`**: os dados do arquivo no SSD são mapeados diretamente no espaço de endereçamento virtual do processo.
+* **Benefícios:**
+  - Inicialização quase instantânea (*Zero-Copy*).
+  - O sistema operacional gerencia as páginas de memória em cache de forma transparente, permitindo que processos compartilhem recursos sem duplicação de dados.
+
+### 2. Aceleração Vetorial SIMD (AVX2 e ARM NEON)
+* **SIMD** (*Single Instruction, Multiple Data*): capacidade do processador de executar a mesma operação matemática sobre múltiplos dados simultaneamente.
+* Em modelos quantizados (`Q8_0`), instruções como **AVX2** (x86) ou **NEON** (ARM) carregam blocos de números de 8 bits em registradores largos (ex.: 256 bits) e realizam produtos escalares paralelizados em um único ciclo de clock, permitindo altas taxas de geração mesmo sem GPU dedicada.
+
+### 3. Orquestração em Containers Docker Isolados
+Na Demo 2, o ambiente é desacoplado em dois containers integrados por rede virtual interna:
+* **`slm-ollama` (Backend):** Executa o daemon do Ollama na porta do host `11435` (evitando conflito caso o host já possua uma instância padrão na porta `11434`). Carrega o modelo definido via [`Modelfile`](file:///c:/Users/Pichau/projects/ia_generativa/demo2_local_gguf/Modelfile) (`FROM /models/qwen2.5-0.5b-instruct.gguf`).
+* **`slm-open-webui` (Frontend):** Interface de usuário moderna exposta em `http://localhost:3000`, conectada diretamente ao container do Ollama via `http://ollama:11434`.
+* **Configuração de Contexto no `Modelfile`:** Parâmetros como `PARAMETER num_ctx 16384` garantem que o modelo suporte histórico longo de mensagens e payloads gerados pela interface sem truncamento de respostas.
+
+---
+
+## 📌 Parte 5: Arquitetura da Demo 3 (Mobile: MLC LLM + Apache TVM)
+
+### 1. Compilação de Redes Neurais vs. Motores Interpretados
+* Enquanto o ONNX Runtime e o `llama.cpp` são executáveis genéricos que interpretam arquivos de modelo, o **MLC LLM (baseado no Apache TVM Relax)** atua como um **compilador de ponta a ponta**.
+* O compilador analisa o grafo estrutural do modelo, gera código nativo em C++ para a CPU (`aarch64-linux-android`) e sintetiza shaders customizados em **OpenCL** para a GPU mobile (Qualcomm Adreno ou ARM Mali), empacotando o runtime na biblioteca nativa `libtvm4j_runtime_packed.so`.
+
+### 2. Otimização de Memória e *Chunked Prefill*
+Em ambientes mobile, o sistema operacional Android conta com o *Low Memory Killer* (LMK), que finaliza processos que demandam picos excessivos de alocação de memória.
+* Modelos configurados para servidores costumam pré-alocar buffers para janelas de até 32K tokens, demandando mais de 5 GB de memória temporária.
+* Na compilação mobile:
+  - Limita-se a janela de contexto para valores adequados ao uso em celular (`context_window_size = 4096`).
+  - Aplica-se **Chunked Prefill** (`prefill_chunk_size = 512`): prompts longos são fatiados e computados em blocos de 512 tokens.
+* **Resultado:** O consumo de buffer temporário diminui drasticamente, permitindo que a alocação total (pesos + buffers + KV-Cache) fique em torno de **~628 MB**, viabilizando a execução em smartphones convencionais.
+
+### 3. Ponte JNI e Provisionamento Offline
+* **Comunicação Kotlin $\leftrightarrow$ C++:** A interface visual do app (`MLCChat`, desenvolvida em Kotlin com Jetpack Compose) delega as chamadas de inferência ao motor C++ (`libtvm4j_runtime_packed.so`) através da camada JNI (*Java Native Interface*).
+* **Compatibilidade com *Scoped Storage* (Android 14/15):** Arquivos transferidos via `adb push` pertencem originalmente ao usuário de sistema `shell` (`UID 2000`), impedindo a leitura direta pelo aplicativo. O provisionamento é realizado copiando os arquivos com o utilitário nativo `run-as ai.mlc.mlcchat` para a pasta privada do aplicativo (`application.filesDir`), permitindo funcionamento 100% offline (inclusive em Modo Avião).
+
+---
+
+## 📌 Parte 6: ONNX Runtime Mobile vs. MLC LLM
+
+| Dimensão | ONNX Runtime Mobile (`onnxruntime-android`) | MLC LLM + Apache TVM |
+| :--- | :--- | :--- |
+| **Abordagem** | Runtime genérico portável | Compilação especializada ponta a ponta |
+| **Aceleração de Hardware** | NNAPI do Android ou Qualcomm QNN (NPU Hexagon) | Kernels OpenCL/Vulkan sob medida para GPU Mobile |
+| **Padronização de Artefatos** | Permite usar o mesmo formato `.onnx` da nuvem ao celular | Exige compilação dedicada gerando bibliotecas de modelo |
+| **Cenário de Escolha** | Equipes que buscam pipeline único de deploy multiplataforma | Casos onde se busca a máxima taxa de decodificação na GPU mobile |
+
+---
+
+## 🛠️ Guia de Reprodução Rápida das Demos
+
+Para reproduzir as três demonstrações de ponta a ponta a partir do notebook [`apresentacao_slms_deploy.ipynb`](file:///c:/Users/Pichau/projects/ia_generativa/apresentacao_slms_deploy.ipynb):
+
+1. **Validação de Ambiente (Bloco 0):** Execute a verificação inicial para confirmar o interpretador Python da `.venv`, a disponibilidade do Docker e as versões das bibliotecas instaladas.
+2. **Demo 1 — Nuvem (Passos 1.1 a 1.6):**
+   - Execute a exportação ONNX e verifique a geração dos arquivos `model.onnx` e `model.onnx_data`.
+   - Suba o container Docker (`docker compose up -d --build`) e aguarde o healthcheck em `http://localhost:8000/health`.
+   - Explore o Swagger UI em `http://localhost:8000/docs` e valide a inferência via `POST /generate`.
+3. **Demo 2 — Local (Passos 2.1 a 2.5):**
+   - Execute o download dos pesos e a quantização para `Q8_0` via `convert_hf_to_gguf.py`.
+   - Suba os containers do Ollama e Open WebUI (`docker compose up -d`) e registre o modelo via `ollama create`.
+   - Acesse a interface web em `http://localhost:3000` e teste a API REST na porta `11435`.
+4. **Demo 3 — Android (Passos 3.1 a 3.4):**
+   - Gere o `mlc-chat-config.json` e execute a compilação TVM (`mlc_llm compile --device android`).
+   - Compile o APK nativo com o Gradle Wrapper (`gradlew.bat assembleDebug`).
+   - Conecte o smartphone Android com depuração USB ativada e execute o provisionamento offline para validar o chat local no aparelho.
